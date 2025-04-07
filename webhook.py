@@ -32,6 +32,7 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 def forward_message_to_user(user_id, text):
+    print("🛫 Entered forward_message_to_user()")
     headers = {
         "Authorization": f"Bearer {LINE_ACCESS_TOKEN}",
         "Content-Type": "application/json"
@@ -66,6 +67,8 @@ def webhook():
                     timestamp = int(event["timestamp"]) // 1000
                     date = datetime.fromtimestamp(timestamp)
 
+                    print(f"💬 Received X from {user_id}: {text}")
+
                     # Save message to DB
                     message = Message(date=date, text=text, user_id=user_id)
                     session.add(message)
@@ -73,6 +76,7 @@ def webhook():
 
                     # Forward message to admin (using env var FORWARD_USER_ID)
                     if FORWARD_USER_ID:
+                        print(f"🟢 FORWARD_USER_ID found: {FORWARD_USER_ID}")
                         forward_message_to_user(FORWARD_USER_ID, text)
 
         return jsonify({"status": "ok"}), 200
