@@ -22,6 +22,7 @@ LINE_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
 FORWARD_USER_ID = os.environ.get("FORWARD_USER_ID")
 ADMIN_ID = os.environ.get("ADMIN_ID")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
 
@@ -71,6 +72,28 @@ def forward_message_to_user(user_id, text):
     )
     print(f"Forward status: {response.status_code} {response.text}")
 
+def reply_to_line_user(user_id, text):
+    print("🤖 Replying to user via LINE")
+    headers = {
+        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "to": user_id,
+        "messages": [
+            {
+                "type": "text",
+                "text": text
+            }
+        ]
+    }
+    response = requests.post(
+        "https://api.line.me/v2/bot/message/push",
+        headers=headers,
+        json=payload
+    )
+    print(f"Reply status: {response.status_code} {response.text}")
+
 def get_user_name(user_id):
     try:
         headers = {
@@ -85,6 +108,30 @@ def get_user_name(user_id):
     except Exception as e:
         print("⚠️ Exception in get_user_name:", e)
     return None
+
+def call_chatgpt(prompt):
+    print("🤖 Calling ChatGPT API")
+    try:
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "gpt-3.5-turbo",
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant who answers concisely and clearly."},
+                {"role": "user", "content": prompt}
+            ]
+        }
+        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+        if response.status_code == 200:
+            reply = response.json()["choices"][0]["message"]["content"]
+            return reply.strip()
+        else:
+            print(f"⚠️ ChatGPT API error: {response.status_code} {response.text}")
+    except Exception as e:
+        print("⚠️ Exception in call_chatgpt:", e)
+    return "I'm sorry, I couldn't generate a response."
 
 def is_valid_signature(request):
     signature = request.headers.get("X-Line-Signature", "")
@@ -118,7 +165,6 @@ def webhook():
                     print(f"💬 Received from {user_id}: {text}")
 
                     if user_id == ADMIN_ID:
-                        print(f"🔍 found admin {user_id}")
                         admin_message = AdminMessage(date=date, text=text, user_id=user_id)
                         session.add(admin_message)
                     else:
@@ -134,14 +180,17 @@ def webhook():
                                 print(f"👤 Saving user profile: {display_name}")
                                 new_user = UserProfile(user_id=user_id, display_name=display_name)
                                 session.add(new_user)
-                        else:
-                            print(f"🔍 found profile {user_id}")
 
                     session.commit()
 
                     if FORWARD_USER_ID:
                         print(f"🟢 FORWARD_USER_ID found: {FORWARD_USER_ID}")
                         forward_message_to_user(FORWARD_USER_ID, text)
+
+                    # ChatGPT auto-reply if message is from FORWARD_USER_ID
+                    if user_id == FORWARD_USER_ID:
+                        reply = call_chatgpt(text)
+                        reply_to_line_user(user_id, reply)
 
         return jsonify({"status": "ok"}), 200
     except Exception as e:
