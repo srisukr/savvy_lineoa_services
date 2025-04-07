@@ -5,8 +5,8 @@ import base64
 import requests
 import time
 from flask import Flask, request, jsonify, abort
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.exc import NoResultFound
 from datetime import datetime
 from dotenv import load_dotenv
@@ -86,10 +86,10 @@ class LineMyShopOrderItem(Base):
     name = Column(String)
     sku = Column(String)
     quantity = Column(Integer)
-    price = Column(Float)
-    discounted_price = Column(Float)
+    price = Column(float)
+    discounted_price = Column(float)
     barcode = Column(String)
-    weight = Column(Float)
+    weight = Column(float)
     image_url = Column(String)
     raw_data = Column(Text)
     order = relationship("LineMyShopOrder", back_populates="items")
