@@ -1,6 +1,9 @@
 import os
+import hmac
+import hashlib
+import base64
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import NoResultFound
@@ -16,6 +19,7 @@ app = Flask(__name__)
 # DB Config
 DATABASE_URL = os.environ.get("DATABASE_URL")
 LINE_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
+LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
 FORWARD_USER_ID = os.environ.get("FORWARD_USER_ID")
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
@@ -53,8 +57,23 @@ def forward_message_to_user(user_id, text):
     )
     print(f"Forward status: {response.status_code} {response.text}")
 
+def is_valid_signature(request):
+    signature = request.headers.get("X-Line-Signature", "")
+    body = request.get_data(as_text=True)
+    hash = hmac.new(
+        LINE_CHANNEL_SECRET.encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256
+    ).digest()
+    computed_signature = base64.b64encode(hash).decode()
+    return hmac.compare_digest(computed_signature, signature)
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    if not is_valid_signature(request):
+        print("❌ Invalid signature: possible spoofed request")
+        abort(403)
+
     try:
         data = request.get_json()
         print("📩 Raw Payload:", data)
@@ -67,7 +86,7 @@ def webhook():
                     timestamp = int(event["timestamp"]) // 1000
                     date = datetime.fromtimestamp(timestamp)
 
-                    print(f"💬 Received X from {user_id}: {text}")
+                    print(f"💬 Received from {user_id}: {text}")
 
                     # Save message to DB
                     message = Message(date=date, text=text, user_id=user_id)
