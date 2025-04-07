@@ -21,6 +21,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 LINE_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
 FORWARD_USER_ID = os.environ.get("FORWARD_USER_ID")
+ADMIN_ID = os.environ.get("ADMIN_ID")
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
 
@@ -30,6 +31,19 @@ class Message(Base):
     date = Column(DateTime, nullable=False)
     text = Column(Text, nullable=False)
     user_id = Column(String, nullable=False)
+
+class AdminMessage(Base):
+    __tablename__ = "admin_messages"
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, nullable=False)
+    text = Column(Text, nullable=False)
+    user_id = Column(String, nullable=False)
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False)
+    display_name = Column(String)
 
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
@@ -56,6 +70,21 @@ def forward_message_to_user(user_id, text):
         json=payload
     )
     print(f"Forward status: {response.status_code} {response.text}")
+
+def get_user_name(user_id):
+    try:
+        headers = {
+            "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
+        }
+        response = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers=headers)
+        if response.status_code == 200:
+            profile = response.json()
+            return profile.get("displayName")
+        else:
+            print(f"⚠️ Failed to fetch user profile: {response.status_code} {response.text}")
+    except Exception as e:
+        print("⚠️ Exception in get_user_name:", e)
+    return None
 
 def is_valid_signature(request):
     signature = request.headers.get("X-Line-Signature", "")
@@ -88,12 +117,23 @@ def webhook():
 
                     print(f"💬 Received from {user_id}: {text}")
 
-                    # Save message to DB
-                    message = Message(date=date, text=text, user_id=user_id)
-                    session.add(message)
+                    if user_id == ADMIN_ID:
+                        admin_message = AdminMessage(date=date, text=text, user_id=user_id)
+                        session.add(admin_message)
+                    else:
+                        message = Message(date=date, text=text, user_id=user_id)
+                        session.add(message)
+
+                        existing_user = session.query(UserProfile).filter_by(user_id=user_id).first()
+                        if not existing_user:
+                            display_name = get_user_name(user_id)
+                            if display_name:
+                                print(f"👤 New user profile: {display_name}")
+                                new_user = UserProfile(user_id=user_id, display_name=display_name)
+                                session.add(new_user)
+
                     session.commit()
 
-                    # Forward message to admin (using env var FORWARD_USER_ID)
                     if FORWARD_USER_ID:
                         print(f"🟢 FORWARD_USER_ID found: {FORWARD_USER_ID}")
                         forward_message_to_user(FORWARD_USER_ID, text)
