@@ -24,6 +24,7 @@ LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
 FORWARD_USER_ID = os.environ.get("FORWARD_USER_ID")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+LINESHOP_KEY = os.environ.get("LINESHOP_KEY")
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
 
@@ -54,6 +55,16 @@ class ChatGPTLog(Base):
     user_id = Column(String, nullable=False)
     prompt = Column(Text, nullable=False)
     response = Column(Text, nullable=False)
+
+class LineMyShopOrder(Base):
+    __tablename__ = "line_myshop_orders"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(String, nullable=False)
+    buyer_name = Column(String)
+    buyer_phone = Column(String)
+    total_price = Column(String)
+    raw_data = Column(Text)
+    date = Column(DateTime, default=datetime.utcnow)
 
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
@@ -222,5 +233,47 @@ def webhook():
         session.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
 
+def is_valid_myshop_signature(req):
+    signature = req.headers.get("x-myshop-signature")
+    body = req.get_data(as_text=True)
+    expected_signature = hmac.new(
+        LINESHOP_KEY.encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected_signature)
+
+@app.route('/sassy-line-myshop-webhook', methods=['POST'])
+def sassy_line_myshop_webhook():
+    if not is_valid_myshop_signature(request):
+        print("❌ Invalid LINE MyShop signature")
+        abort(403)
+
+    try:
+        data = request.get_json()
+        print("📦 LINE MyShop Payload:", data)
+
+        order_id = data.get("order_id")
+        buyer_name = data.get("buyer", {}).get("name")
+        buyer_phone = data.get("buyer", {}).get("phone")
+        total_price = data.get("total_price")
+
+        order = LineMyShopOrder(
+            order_id=order_id,
+            buyer_name=buyer_name,
+            buyer_phone=buyer_phone,
+            total_price=total_price,
+            raw_data=str(data)
+        )
+        session.add(order)
+        session.commit()
+
+        return jsonify({"status": "received"}), 200
+    except Exception as e:
+        print("❌ Error in LINE MyShop webhook:", e)
+        session.rollback()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+    
 if __name__ == '__main__':
     app.run(debug=True)
