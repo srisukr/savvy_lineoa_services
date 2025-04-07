@@ -118,6 +118,7 @@ def webhook():
                     print(f"💬 Received from {user_id}: {text}")
 
                     if user_id == ADMIN_ID:
+                        print(f"🔍 found admin {user_id}")
                         admin_message = AdminMessage(date=date, text=text, user_id=user_id)
                         session.add(admin_message)
                     else:
