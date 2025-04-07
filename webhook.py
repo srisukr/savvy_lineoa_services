@@ -3,6 +3,7 @@ import hmac
 import hashlib
 import base64
 import requests
+import time
 from flask import Flask, request, jsonify, abort
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -45,6 +46,14 @@ class UserProfile(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(String, unique=True, nullable=False)
     display_name = Column(String)
+
+class ChatGPTLog(Base):
+    __tablename__ = "chatgpt_logs"
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, nullable=False)
+    user_id = Column(String, nullable=False)
+    prompt = Column(Text, nullable=False)
+    response = Column(Text, nullable=False)
 
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
@@ -111,26 +120,36 @@ def get_user_name(user_id):
 
 def call_chatgpt(prompt):
     print("🤖 Calling ChatGPT API")
-    try:
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "gpt-3.5-turbo",
-            "messages": [
-                {"role": "system", "content": "You are a helpful assistant who answers concisely and clearly."},
-                {"role": "user", "content": prompt}
-            ]
-        }
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-        if response.status_code == 200:
-            reply = response.json()["choices"][0]["message"]["content"]
-            return reply.strip()
-        else:
-            print(f"⚠️ ChatGPT API error: {response.status_code} {response.text}")
-    except Exception as e:
-        print("⚠️ Exception in call_chatgpt:", e)
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-4o",
+        "temperature": 0.7,
+        "max_tokens": 300,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant who answers concisely and clearly."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+    retries = 3
+    backoff = 1
+
+    for attempt in range(retries):
+        try:
+            response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+            if response.status_code == 200:
+                reply = response.json()["choices"][0]["message"]["content"].strip()
+                return reply
+            else:
+                print(f"⚠️ ChatGPT API error ({response.status_code}): {response.text}")
+        except Exception as e:
+            print(f"⚠️ Exception in call_chatgpt (attempt {attempt + 1}):", e)
+
+        time.sleep(backoff)
+        backoff *= 2
+
     return "I'm sorry, I couldn't generate a response."
 
 def is_valid_signature(request):
@@ -167,30 +186,35 @@ def webhook():
                     if user_id == ADMIN_ID:
                         admin_message = AdminMessage(date=date, text=text, user_id=user_id)
                         session.add(admin_message)
-                    else:
-                        message = Message(date=date, text=text, user_id=user_id)
-                        session.add(message)
+                        session.commit()
+                        continue
 
-                        existing_user = session.query(UserProfile).filter_by(user_id=user_id).first()
-                        if not existing_user:
-                            print(f"🔍 No profile found for {user_id}, trying to fetch...")
-                            display_name = get_user_name(user_id)
-                            print(f"📛 Fetched display name: {display_name}")
-                            if display_name:
-                                print(f"👤 Saving user profile: {display_name}")
-                                new_user = UserProfile(user_id=user_id, display_name=display_name)
-                                session.add(new_user)
+                    if user_id == FORWARD_USER_ID:
+                        reply = call_chatgpt(text)
+                        reply_to_line_user(user_id, reply)
+                        chat_log = ChatGPTLog(date=date, user_id=user_id, prompt=text, response=reply)
+                        session.add(chat_log)
+                        session.commit()
+                        continue
+
+                    message = Message(date=date, text=text, user_id=user_id)
+                    session.add(message)
+
+                    existing_user = session.query(UserProfile).filter_by(user_id=user_id).first()
+                    if not existing_user:
+                        print(f"🔍 No profile found for {user_id}, trying to fetch...")
+                        display_name = get_user_name(user_id)
+                        print(f"📛 Fetched display name: {display_name}")
+                        if display_name:
+                            print(f"👤 Saving user profile: {display_name}")
+                            new_user = UserProfile(user_id=user_id, display_name=display_name)
+                            session.add(new_user)
 
                     session.commit()
 
                     if FORWARD_USER_ID:
                         print(f"🟢 FORWARD_USER_ID found: {FORWARD_USER_ID}")
                         forward_message_to_user(FORWARD_USER_ID, text)
-
-                    # ChatGPT auto-reply if message is from FORWARD_USER_ID
-                    if user_id == FORWARD_USER_ID:
-                        reply = call_chatgpt(text)
-                        reply_to_line_user(user_id, reply)
 
         return jsonify({"status": "ok"}), 200
     except Exception as e:
