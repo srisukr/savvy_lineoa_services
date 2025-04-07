@@ -125,6 +125,7 @@ def webhook():
                         session.add(message)
 
                         existing_user = session.query(UserProfile).filter_by(user_id=user_id).first()
+                        print(f"User profile: {user_id}")
                         if not existing_user:
                             print(f"🔍 No profile found for {user_id}, trying to fetch...")
                             display_name = get_user_name(user_id)
