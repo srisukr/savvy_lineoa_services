@@ -189,12 +189,12 @@ def webhook():
                         session.commit()
                         continue
 
-                    if user_id == FORWARD_USER_ID:
-                        reply = call_chatgpt(text)
-                        reply_to_line_user(user_id, reply)
-                        chat_log = ChatGPTLog(date=date, user_id=user_id, prompt=text, response=reply)
-                        session.add(chat_log)
-                        session.commit()
+                    # if user_id == FORWARD_USER_ID:
+#     reply = call_chatgpt(text)
+#     reply_to_line_user(user_id, reply)
+#     chat_log = ChatGPTLog(date=date, user_id=user_id, prompt=text, response=reply)
+#     session.add(chat_log)
+#     session.commit()
                         continue
 
                     message = Message(date=date, text=text, user_id=user_id)
