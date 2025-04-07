@@ -59,12 +59,40 @@ class ChatGPTLog(Base):
 class LineMyShopOrder(Base):
     __tablename__ = "line_myshop_orders"
     id = Column(Integer, primary_key=True)
-    order_id = Column(String, nullable=False)
-    buyer_name = Column(String)
-    buyer_phone = Column(String)
-    total_price = Column(String)
+    order_number = Column(String, nullable=False)
+    order_status = Column(String)
+    event_name = Column(String)
+    event_timestamp = Column(String)
+    payment_method = Column(String)
+    payment_status = Column(String)
+    recipient_name = Column(String)
+    phone_number = Column(String)
+    address = Column(String)
+    shipment_company_name = Column(String)
+    tracking_number = Column(String)
+    subtotal_price = Column(Float)
+    total_price = Column(Float)
+    shipment_price = Column(Float)
+    is_cod = Column(Boolean)
+    is_gift = Column(Boolean)
     raw_data = Column(Text)
     date = Column(DateTime, default=datetime.utcnow)
+    items = relationship("LineMyShopOrderItem", back_populates="order")
+
+class LineMyShopOrderItem(Base):
+    __tablename__ = "line_myshop_order_items"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey('line_myshop_orders.id'))
+    name = Column(String)
+    sku = Column(String)
+    quantity = Column(Integer)
+    price = Column(Float)
+    discounted_price = Column(Float)
+    barcode = Column(String)
+    weight = Column(Float)
+    image_url = Column(String)
+    raw_data = Column(Text)
+    order = relationship("LineMyShopOrder", back_populates="items")
 
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
@@ -253,26 +281,52 @@ def sassy_line_myshop_webhook():
         data = request.get_json()
         print("📦 LINE MyShop Payload:", data)
 
-        order_id = data.get("order_id")
-        buyer_name = data.get("buyer", {}).get("name")
-        buyer_phone = data.get("buyer", {}).get("phone")
-        total_price = data.get("total_price")
-
         order = LineMyShopOrder(
-            order_id=order_id,
-            buyer_name=buyer_name,
-            buyer_phone=buyer_phone,
-            total_price=total_price,
-            raw_data=str(data)
+            order_number = data.get("orderNumber"),
+            order_status = data.get("orderStatus"),
+            event_name = data.get("event", {}).get("name"),
+            event_timestamp = data.get("event", {}).get("timestamp"),
+            payment_method = data.get("paymentMethod"),
+            payment_status = data.get("paymentStatus"),
+            recipient_name = data.get("shippingAddress", {}).get("recipientName"),
+            phone_number = data.get("shippingAddress", {}).get("phoneNumber"),
+            address = data.get("shippingAddress", {}).get("address"),
+            shipment_company_name = data.get("shipmentDetail", {}).get("shipmentCompanyNameTh"),
+            tracking_number = data.get("shipmentDetail", {}).get("trackingNumber"),
+            subtotal_price = data.get("subtotalPrice", 0),
+            total_price = data.get("totalPrice", 0),
+            shipment_price = data.get("shipmentPrice", 0),
+            is_cod = data.get("shipmentDetail", {}).get("isCod", False),
+            is_gift = data.get("isGift", False),
+            raw_data = str(data)
         )
-        session.add(order)
-        session.commit()
 
+        session.add(order)
+        session.flush()  # get order.id for item linkage
+
+        for item in data.get("orderItems", []):
+            order_item = LineMyShopOrderItem(
+                order_id = order.id,
+                name = item.get("name"),
+                sku = item.get("sku"),
+                quantity = item.get("quantity", 0),
+                price = item.get("price", 0),
+                discounted_price = item.get("discountedPrice", 0),
+                barcode = item.get("barcode"),
+                weight = item.get("weight", 0),
+                image_url = item.get("imageURL"),
+                raw_data = str(item)
+            )
+            session.add(order_item)
+
+        session.commit()
         return jsonify({"status": "received"}), 200
+
     except Exception as e:
         print("❌ Error in LINE MyShop webhook:", e)
         session.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
     
 if __name__ == '__main__':
